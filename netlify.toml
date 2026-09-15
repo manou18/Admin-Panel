@@ -1,10 +1,11 @@
 [build]
-  publish = "."
-  functions = "."
+  publish = "public"
+  functions = "netlify/functions"
 
 [functions]
   node_bundler = "esbuild"
 
+# اجعل كل الروابط تعمل حتى لو دخل المستخدم رابط فرعي مباشرة
 [[redirects]]
   from = "/*"
   to = "/index.html"
