@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Netlify Blobs Admin Panel</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --border: #2a2f3a;
+    --text: #e8e9ec;
+    --muted: #9aa1ae;
+    --accent: #4f8cff;
+    --danger: #ff5c5c;
+    --ok: #3ecf8e;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Segoe UI", Tahoma, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    padding: 32px 16px;
+  }
+  .wrap { width: 100%; max-width: 900px; }
+  h1 { font-size: 20px; margin-bottom: 4px; }
+  p.sub { color: var(--muted); margin-top: 0; margin-bottom: 24px; font-size: 14px; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+  label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  input, textarea {
+    width: 100%;
+    background: #0d0f14;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 12px;
+    color: var(--text);
+    font-family: inherit;
+    font-size: 14px;
+    margin-bottom: 14px;
+  }
+  textarea { font-family: ui-monospace, Consolas, monospace; min-height: 220px; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; }
+  .row > div { flex: 1; min-width: 160px; }
+  button {
+    background: var(--accent);
+    border: none;
+    color: white;
+    padding: 10px 16px;
+    border-radius: 6px;
+    font-size: 14px;
+    cursor: pointer;
+    margin-right: 8px;
+  }
+  button:hover { opacity: 0.9; }
+  button.danger { background: var(--danger); }
+  button.secondary { background: #2a2f3a; }
+  #status { font-size: 13px; margin-top: 10px; white-space: pre-wrap; }
+  .ok { color: var(--ok); }
+  .err { color: var(--danger); }
+  #keysList { max-height: 200px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; }
+  #keysList div {
+    padding: 8px 12px;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border);
+    font-family: ui-monospace, monospace;
+    font-size: 13px;
+  }
+  #keysList div:hover { background: #1e2330; }
+  #keysList div:last-child { border-bottom: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Netlify Blobs Admin Panel</h1>
+  <p class="sub">Internal tool for fixing data errors and resolving disputes. Use with care.</p>
+
+  <div class="card">
+    <label>Admin Password</label>
+    <input type="password" id="password" placeholder="ADMIN_PASSWORD" />
+    <label>Store Name</label>
+    <input type="text" id="storeName" placeholder="e.g. purchases" />
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <div>
+        <button id="btnList">📋 List All Keys</button>
+      </div>
+    </div>
+    <div id="keysList"></div>
+  </div>
+
+  <div class="card">
+    <label>Key</label>
+    <input type="text" id="key" placeholder="e.g. VxxLrlDtH26Xxu12xVeaMrpsiNSA" />
+    <label>Value (JSON)</label>
+    <textarea id="value" placeholder='{ "uid": "...", "status": "completed" }'></textarea>
+    <div>
+      <button id="btnLoad" class="secondary">Load Value</button>
+      <button id="btnSave">💾 Save / Update</button>
+      <button id="btnDelete" class="danger">🗑 Delete</button>
+    </div>
+  </div>
+
+  <div id="status"></div>
+</div>
+
+<script>
+const FN_URL = '/.netlify/functions/blobs';
+
+function getHeaders() {
+  return {
+    'Content-Type': 'application/json',
+    'x-admin-password': document.getElementById('password').value,
+  };
+}
+function getStoreName() {
+  return document.getElementById('storeName').value.trim();
+}
+function setStatus(msg, isError) {
+  const el = document.getElementById('status');
+  el.textContent = msg;
+  el.className = isError ? 'err' : 'ok';
+}
+
+document.getElementById('btnList').onclick = async () => {
+  const store = getStoreName();
+  if (!store) return setStatus('Please set the store name first', true);
+  try {
+    const res = await fetch(`${FN_URL}?store=${encodeURIComponent(store)}`, { headers: getHeaders() });
+    const data = await res.json();
+    if (!res.ok) return setStatus(data.error || 'Error', true);
+    const list = document.getElementById('keysList');
+    list.innerHTML = '';
+    if (data.keys.length === 0) {
+      list.innerHTML = '<div style="cursor:default">No keys found</div>';
+    }
+    data.keys.forEach(k => {
+      const div = document.createElement('div');
+      div.textContent = k;
+      div.onclick = () => {
+        document.getElementById('key').value = k;
+        document.getElementById('btnLoad').click();
+      };
+      list.appendChild(div);
+    });
+    setStatus(`Found ${data.keys.length} key(s)`);
+  } catch (e) {
+    setStatus(e.message, true);
+  }
+};
+
+document.getElementById('btnLoad').onclick = async () => {
+  const store = getStoreName();
+  const key = document.getElementById('key').value.trim();
+  if (!store || !key) return setStatus('Please set both store and key', true);
+  try {
+    const res = await fetch(`${FN_URL}?store=${encodeURIComponent(store)}&key=${encodeURIComponent(key)}`, { headers: getHeaders() });
+    const data = await res.json();
+    if (!res.ok) return setStatus(data.error || 'Error', true);
+    document.getElementById('value').value = JSON.stringify(data.value, null, 2);
+    setStatus('Loaded');
+  } catch (e) {
+    setStatus(e.message, true);
+  }
+};
+
+document.getElementById('btnSave').onclick = async () => {
+  const store = getStoreName();
+  const key = document.getElementById('key').value.trim();
+  const valueRaw = document.getElementById('value').value;
+  if (!store || !key) return setStatus('Please set both store and key', true);
+  let parsed;
+  try {
+    parsed = JSON.parse(valueRaw);
+  } catch (e) {
+    return setStatus('Value is not valid JSON', true);
+  }
+  try {
+    const res = await fetch(`${FN_URL}?store=${encodeURIComponent(store)}&key=${encodeURIComponent(key)}`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify(parsed),
+    });
+    const data = await res.json();
+    if (!res.ok) return setStatus(data.error || 'Error', true);
+    setStatus('Saved successfully ✅');
+  } catch (e) {
+    setStatus(e.message, true);
+  }
+};
+
+document.getElementById('btnDelete').onclick = async () => {
+  const store = getStoreName();
+  const key = document.getElementById('key').value.trim();
+  if (!store || !key) return setStatus('Please set both store and key', true);
+  if (!confirm(`Are you sure you want to delete key "${key}"?`)) return;
+  try {
+    const res = await fetch(`${FN_URL}?store=${encodeURIComponent(store)}&key=${encodeURIComponent(key)}`, {
+      method: 'DELETE',
+      headers: getHeaders(),
+    });
+    const data = await res.json();
+    if (!res.ok) return setStatus(data.error || 'Error', true);
+    setStatus('Deleted 🗑');
+  } catch (e) {
+    setStatus(e.message, true);
+  }
+};
+</script>
+</body>
+</html>
