@@ -1,4 +1,4 @@
-const { getStore } = require('@netlify/blobs');
+const { getStore, listStores } = require('@netlify/blobs');
 
 // The admin password is read from an environment variable on Netlify:
 // Site settings > Environment variables > ADMIN_PASSWORD
@@ -37,6 +37,22 @@ exports.handler = async (event) => {
   }
 
   const params = event.queryStringParameters || {};
+
+  // ---- GET: list all store names in this site (for populating the dropdown) ----
+  if (event.httpMethod === 'GET' && params.action === 'list-stores') {
+    try {
+      const siteID = process.env.NETLIFY_SITE_ID;
+      const token = process.env.NETLIFY_TOKEN;
+      if (!siteID || !token) {
+        throw new Error('NETLIFY_SITE_ID or NETLIFY_TOKEN is not set in environment variables');
+      }
+      const { stores } = await listStores({ siteID, token });
+      return { statusCode: 200, headers, body: JSON.stringify({ stores }) };
+    } catch (err) {
+      return { statusCode: 500, headers, body: JSON.stringify({ error: err.message }) };
+    }
+  }
+
   const storeName = params.store;
   const key = params.key;
 
@@ -62,7 +78,30 @@ exports.handler = async (event) => {
         return { statusCode: 200, headers, body: JSON.stringify({ key, value }) };
       } else {
         const { blobs } = await store.list();
-        return { statusCode: 200, headers, body: JSON.stringify({ keys: blobs.map(b => b.key) }) };
+        const statusFilter = params.status;
+
+        if (!statusFilter) {
+          return { statusCode: 200, headers, body: JSON.stringify({ keys: blobs.map(b => b.key) }) };
+        }
+
+        // A status filter was requested (e.g. approved / completed): fetch every
+        // value so we can check its "status" field, then only return matches.
+        const items = await Promise.all(blobs.map(async (b) => {
+          try {
+            const value = await store.get(b.key, { type: 'json' });
+            return { key: b.key, status: value && value.status };
+          } catch (e) {
+            return { key: b.key, status: null };
+          }
+        }));
+        const filtered = items.filter(
+          (item) => item.status && item.status.toLowerCase() === statusFilter.toLowerCase()
+        );
+        return {
+          statusCode: 200,
+          headers,
+          body: JSON.stringify({ keys: filtered.map((i) => i.key), items: filtered }),
+        };
       }
     }
 
