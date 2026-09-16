@@ -37,7 +37,7 @@
     margin-bottom: 16px;
   }
   label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
-  input, textarea {
+  input, textarea, select {
     width: 100%;
     background: #0d0f14;
     border: 1px solid var(--border);
@@ -64,6 +64,7 @@
   button:hover { opacity: 0.9; }
   button.danger { background: var(--danger); }
   button.secondary { background: #2a2f3a; }
+  button.filter-btn.active { background: var(--accent); }
   #status { font-size: 13px; margin-top: 10px; white-space: pre-wrap; }
   .ok { color: var(--ok); }
   .err { color: var(--danger); }
@@ -88,13 +89,38 @@
     <label>Admin Password</label>
     <input type="password" id="password" placeholder="ADMIN_PASSWORD" />
     <label>Store Name</label>
-    <input type="text" id="storeName" placeholder="e.g. purchases" />
+    <div class="row" style="align-items:flex-start">
+      <div style="flex:3">
+        <select id="storeSelect">
+          <option value="game-start-throttle">game-start-throttle</option>
+          <option value="leaderboard">leaderboard</option>
+          <option value="payments">payments</option>
+          <option value="pi-price-cache">pi-price-cache</option>
+          <option value="player-progress">player-progress</option>
+          <option value="rate-limits">rate-limits</option>
+          <option value="used-game-tokens">used-game-tokens</option>
+          <option value="__custom__">Other (type manually)…</option>
+        </select>
+      </div>
+      <div style="flex:0 0 auto">
+        <button id="btnRefreshStores" class="secondary" type="button">🔄 Refresh List</button>
+      </div>
+    </div>
+    <input type="text" id="storeNameCustom" placeholder="e.g. purchases" style="display:none" />
   </div>
 
   <div class="card">
     <div class="row">
       <div>
         <button id="btnList">📋 List All Keys</button>
+      </div>
+    </div>
+    <div id="statusFilterRow" style="display:none; margin-bottom:14px">
+      <label style="margin-bottom:8px">Filter by status (payments)</label>
+      <div class="row">
+        <button type="button" class="filter-btn secondary active" data-status="">All</button>
+        <button type="button" class="filter-btn secondary" data-status="approved">✅ Approved</button>
+        <button type="button" class="filter-btn secondary" data-status="completed">🏁 Completed</button>
       </div>
     </div>
     <div id="keysList"></div>
@@ -125,8 +151,65 @@ function getHeaders() {
   };
 }
 function getStoreName() {
-  return document.getElementById('storeName').value.trim();
+  const select = document.getElementById('storeSelect');
+  if (select.value === '__custom__') {
+    return document.getElementById('storeNameCustom').value.trim();
+  }
+  return select.value.trim();
 }
+
+function updateFilterVisibility() {
+  const row = document.getElementById('statusFilterRow');
+  row.style.display = getStoreName() === 'payments' ? 'block' : 'none';
+}
+
+document.getElementById('storeSelect').onchange = () => {
+  const isCustom = document.getElementById('storeSelect').value === '__custom__';
+  const customInput = document.getElementById('storeNameCustom');
+  customInput.style.display = isCustom ? 'block' : 'none';
+  if (isCustom) customInput.focus();
+  updateFilterVisibility();
+};
+document.getElementById('storeNameCustom').oninput = updateFilterVisibility;
+
+let currentStatusFilter = '';
+document.querySelectorAll('.filter-btn').forEach((btn) => {
+  btn.onclick = () => {
+    document.querySelectorAll('.filter-btn').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentStatusFilter = btn.dataset.status;
+    document.getElementById('btnList').click();
+  };
+});
+
+document.getElementById('btnRefreshStores').onclick = async () => {
+  if (!document.getElementById('password').value) {
+    return setStatus('Please enter the admin password first', true);
+  }
+  try {
+    const res = await fetch(`${FN_URL}?action=list-stores`, { headers: getHeaders() });
+    const data = await res.json();
+    if (!res.ok) return setStatus(data.error || 'Error', true);
+    const select = document.getElementById('storeSelect');
+    const current = select.value;
+    select.innerHTML = '';
+    data.stores.forEach(name => {
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = name;
+      select.appendChild(opt);
+    });
+    const customOpt = document.createElement('option');
+    customOpt.value = '__custom__';
+    customOpt.textContent = 'Other (type manually)…';
+    select.appendChild(customOpt);
+    if (data.stores.includes(current)) select.value = current;
+    updateFilterVisibility();
+    setStatus(`Loaded ${data.stores.length} store(s) ✅`);
+  } catch (e) {
+    setStatus(e.message, true);
+  }
+};
 function setStatus(msg, isError) {
   const el = document.getElementById('status');
   el.textContent = msg;
@@ -137,7 +220,11 @@ document.getElementById('btnList').onclick = async () => {
   const store = getStoreName();
   if (!store) return setStatus('Please set the store name first', true);
   try {
-    const res = await fetch(`${FN_URL}?store=${encodeURIComponent(store)}`, { headers: getHeaders() });
+    let url = `${FN_URL}?store=${encodeURIComponent(store)}`;
+    if (store === 'payments' && currentStatusFilter) {
+      url += `&status=${encodeURIComponent(currentStatusFilter)}`;
+    }
+    const res = await fetch(url, { headers: getHeaders() });
     const data = await res.json();
     if (!res.ok) return setStatus(data.error || 'Error', true);
     const list = document.getElementById('keysList');
@@ -145,9 +232,10 @@ document.getElementById('btnList').onclick = async () => {
     if (data.keys.length === 0) {
       list.innerHTML = '<div style="cursor:default">No keys found</div>';
     }
-    data.keys.forEach(k => {
+    data.keys.forEach((k, i) => {
       const div = document.createElement('div');
-      div.textContent = k;
+      const item = data.items && data.items[i];
+      div.textContent = item ? `${k}  —  ${item.status}` : k;
       div.onclick = () => {
         document.getElementById('key').value = k;
         document.getElementById('btnLoad').click();
